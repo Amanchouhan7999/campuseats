@@ -1,0 +1,253 @@
+openapi: 3.0.3
+
+info:
+  title: CampusEats Order Service API
+  version: 1.0.0
+  description: REST API for managing CampusEats orders, upgraded with caching, idempotency, and Problem Details validation.
+
+servers:
+  - url: http://localhost:5000
+
+# Require Authorization: Bearer <token> globally (Assignment 5: B3)
+security:
+  - bearerAuth: []
+
+paths:
+  /orders:
+    # Add OPTIONS for CORS and Allow header (Assignment 5: A5)
+    options:
+      summary: Get allowed methods
+      operationId: optionsOrders
+      responses:
+        '204':
+          description: No Content
+          headers:
+            Allow:
+              description: Allowed HTTP methods
+              schema:
+                type: string
+              example: OPTIONS, GET, POST
+
+    post:
+      summary: Create an order
+      operationId: createOrder
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created
+          headers:
+            Location:
+              description: URL of the newly created order
+              schema:
+                type: string
+              example: /orders/ORD-1001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+    get:
+      summary: List orders
+      operationId: listOrders
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter orders by status.
+          schema:
+            type: string
+            example: PLACED
+      responses:
+        '200':
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /orders/{orderId}:
+    get:
+      summary: Get an order
+      operationId: getOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Order details
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /orders/{orderId}/cancellation:
+    post:
+      summary: Cancel an order
+      operationId: cancelOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancellationRequest'
+      responses:
+        '200':
+          description: Order cancelled
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancellationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: Unique order identifier.
+      schema:
+        type: string
+        example: ORD-1001
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Key used to safely retry order creation without creating a duplicate order.
+      schema:
+        type: string
+        example: 8f4d1c2a-1234-4567-8901-abcdef123456
+
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: Conditional GET - ETag of the cached resource.
+      schema:
+        type: string
+        example: '"33a64df551425fcc55e4d42a148795d9f25f89d4"'
+
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: Conditional Write - ETag to prevent lost updates.
+      schema:
+        type: string
+        example: '"33a64df551425fcc55e4d42a148795d9f25f89d4"'
+
+  headers:
+    ETag:
+      description: An identifier for a specific version of a resource.
+      schema:
+        type: string
+        example: '"33a64df551425fcc55e4d42a148795d9f25f89d4"'
+    CacheControl:
+      description: Directives for caching mechanisms in both requests and responses.
+      schema:
+        type: string
+        example: public, max-age=60
+    RetryAfter:
+      description: How long the user agent should wait before making a follow-up request.
+      schema:
+        type: integer
+        example: 120
+    RateLimitLimit:
+      description: The maximum number of requests that the consumer is permitted to make.
+      schema:
+        type: integer
+        example: 100
+    RateLimitRemaining:
+      description: The number of requests remaining in the current rate limit window.
+      schema:
+        type: integer
+        example: 99
+
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required:
+        - userId
+        - cartId
+        - deliveryAddressId
+        - paymentMethod
+      properties:
+        userId:
+          type: string
+          example: CE-STU-33217
+        cartId:
+          type: string
+          example: CART-1001
+        deliveryAddressId:
+          type: string
+          example: ADDR-204
+        paymentMethod:
+          type: string
+          enum: [UPI, CARD, WALLET]
+          example: UPI
+        couponCode:
+          type: string
+          nullable: true
+          example: SAVE1
